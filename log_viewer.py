@@ -90,6 +90,9 @@ class Log:
                     props_arr = np.array(list(temporal_interp_props.values()))
                     props_list = temporal_interp_props.keys()
                 else:
+                    # props_arr seems referenced before assignment here, but any error will be caught
+                    # by the 'UnboundLocalError' exception handler later on. Anyway, the former if
+                    # clause should 'always' initialize it
                     props_arr = np.vstack((props_arr, list(temporal_interp_props.values())))
 
             # Extract cloud fraction
