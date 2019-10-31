@@ -9,10 +9,11 @@ positional arguments:
 
 optional arguments:
   -h, --help            show this help message and exit
-  -v, --verbose         Set verbosity to INFO level + prints stats
+  -v, --verbose         Set verbosity to INFO level (includes stats)
 
 returns:
   Plot files as PNG
+  Table ASCII csv file
 
 Example:
 
@@ -35,8 +36,24 @@ from pandas.plotting import register_matplotlib_converters
 register_matplotlib_converters()
 
 
-class Log():
+class Log:
     def __init__(self, log_file, verbose=False):
+
+        # DataFrame key labels
+        self.lblDate   = 'Date'
+        self.lblRH     = 'RH'
+        self.lblCloud  = 'Cloud Fraction (with shadow)'
+        self.lblCirrus = 'Cirrus Fraction'
+        self.lblOzone  = 'Ozone'
+
+        # Regex definitions
+        self.regexDate   = "^L1C"
+        self.regexRH     = "^average"
+        self.regexCAMS   = "^temporalInterpProps"
+        self.regexCloud  = "couverture nuageuse \(avec ombres\)"
+        self.regexCirrus = "taux de cirrus"
+        self.regexOzone  = "ozone"
+
         try:
             with open(log_file, 'r') as f:
                 self.raw = f.readlines()
@@ -44,7 +61,7 @@ class Log():
                 self.name = log_file.split('/')[-1]
 
             if verbose:
-                print("INFO: successfuly opened %s" % log_file)
+                print("INFO: successfully opened %s" % log_file)
 
         except FileNotFoundError:
             print("ERROR: file %s not found..." % log_file)
@@ -55,18 +72,19 @@ class Log():
         props_list  = []  # List of aerosol models proportion
         cloud_list  = []  # List of cloud fraction with shadow
         cirrus_list = []  # List of cirrus fraction
+        ozone_list  = []  # List of ozone TODO: define unit
 
         for line in range(len(self.raw)):
             # Extract list of date
-            if re.search("^L1C", self.raw[line]) is not None:
+            if re.search(self.regexDate, self.raw[line]) is not None:
                 date_list.append(pd.to_datetime(self.raw[line][10:27], format='%Y%m%d%Z%H%M%S'))
 
             # Extract relative humidity
-            if re.search("^average", self.raw[line]) is not None:
+            if re.search(self.regexRH, self.raw[line]) is not None:
                 rh_list.append(float(self.raw[line].split(':')[1]))
 
             # Extract models proportion
-            if re.search("^temporalInterpProps", self.raw[line]) is not None:
+            if re.search(self.regexCAMS, self.raw[line]) is not None:
                 temporal_interp_props = OrderedDict(sorted(eval(self.raw[line].split(':')[1])))
                 if not props_list:
                     props_arr = np.array(list(temporal_interp_props.values()))
@@ -75,33 +93,50 @@ class Log():
                     props_arr = np.vstack((props_arr, list(temporal_interp_props.values())))
 
             # Extract cloud fraction
-            if re.search("couverture nuageuse \(avec ombres\)", self.raw[line]) is not None:
+            if re.search(self.regexCloud, self.raw[line]) is not None:
                 cloud_list.append(float(self.raw[line].split(':')[2].strip('%\n'))/100)
 
             # Extract cirrus fraction
-            if re.search("taux de cirrus", self.raw[line]) is not None:
+            if re.search(self.regexCirrus, self.raw[line]) is not None:
                 cirrus_list.append(float(self.raw[line][14:]))
 
-        # Building a DataFrame attribute
-        self.df = pd.DataFrame(data={'Date': date_list,
-                                     'RH': rh_list,
-                                     'Cloud Fraction w Shadow': cloud_list,
-                                     'Cirrus Fraction': cirrus_list})
+            # Extract ozone
+            if re.search(self.regexOzone, self.raw[line]) is not None:
+                ozone_list.append(float(self.raw[line].split('=')[1]))
 
-        props_df = pd.DataFrame(props_arr, columns=props_list)
-        self.df = pd.concat([self.df, props_df], axis=1)
-        self.aerosols = props_list
+        # Building an attribute df of type DataFrame
+        try:
+            self.df = pd.DataFrame(data={self.lblDate: date_list,
+                                         self.lblRH: rh_list,
+                                         self.lblCloud: cloud_list,
+                                         self.lblCirrus: cirrus_list,
+                                         self.lblOzone: ozone_list})
+
+            props_df = pd.DataFrame(props_arr, columns=props_list)
+            self.df = pd.concat([self.df, props_df], axis=1)
+            self.aerosols = props_list
+
+        except UnboundLocalError:
+            print("ERROR: file %s doesn't seem to contain expected fields..." % self.name)
+            print("       Is it really a log of the maquette?")
+            sys.exit(1)
 
         if verbose:
             pd.set_option('display.expand_frame_repr', False)
             print(self.df.describe())
+
+    def save_table(self):
+        with open(self.name[:-4] + "_table.csv", 'w') as f:
+            f.write(self.df.to_string())
+
+
 
     def plot_props(self):
         fig, ax1 = pl.subplots(figsize=(12, 6))
 
         stack = 0
         for aerosol in self.aerosols:
-            ax1.bar(self.df['Date'], self.df[aerosol], bottom=stack, label=aerosol)
+            ax1.bar(self.df[self.lblDate], self.df[aerosol], bottom=stack, label=aerosol)
             stack += self.df[aerosol]
 
         ax1.xaxis.set_major_formatter(pl.DateFormatter("%y/%m/%d"))
@@ -111,7 +146,7 @@ class Log():
 
         ax2 = ax1.twinx()
         ax2.set_ylabel('Relative humidity (%)')
-        ax2.plot(self.df['Date'], self.df['RH'])
+        ax2.plot(self.df[self.lblDate], self.df[self.lblRH])
 
         fig.autofmt_xdate()
         pl.title(self.name)
@@ -120,7 +155,7 @@ class Log():
     def plot_clouds(self):
         fig, ax1 = pl.subplots(figsize=(12, 6))
 
-        ax1.bar(self.df['Date'], self.df['Cloud Fraction w Shadow'], label='Cloud Fraction Shd')
+        ax1.bar(self.df[self.lblDate], self.df[self.lblCloud], label=self.lblCloud)
         ax1.set_ylabel('Fraction (-)')
         pl.legend()
 
@@ -141,6 +176,7 @@ def main():
     log = Log(args.FILE, args.verbose)
     log.plot_props()
     log.plot_clouds()
+    log.save_table()
 
     print("INFO: Done...")
     sys.exit(0)
