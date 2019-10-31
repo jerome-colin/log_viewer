@@ -2,14 +2,17 @@
 """
 Maquette log viewer utility
 
-usage: minilv.py [-h] [-v]  FILE
+usage: log_viewer.py [-h] [-v]  FILE
 
 positional arguments:
   FILE                  Maquette LOG output
 
 optional arguments:
   -h, --help            show this help message and exit
-  -v, --verbose         Set verbosity to INFO level + interactive plotting
+  -v, --verbose         Set verbosity to INFO level + prints stats
+
+returns:
+  Plot files as PNG
 
 Example:
 
@@ -21,7 +24,6 @@ __author__ = "J.Colin, CESBIO"
 __license__ = "CC BY"
 __version__ = "0.1.0"
 
-import os
 import sys
 import argparse
 import numpy as np
@@ -35,7 +37,6 @@ register_matplotlib_converters()
 
 class Log():
     def __init__(self, log_file, verbose=False):
-        # Opening LOG file
         try:
             with open(log_file, 'r') as f:
                 self.raw = f.readlines()
@@ -49,11 +50,11 @@ class Log():
             print("ERROR: file %s not found..." % log_file)
             sys.exit(1)
 
-        date_list = []  # List of L1C products used
-        rh_list = []  # List of average relative humidity
-        props_list = []  # List of aerosol models proportion
-        cloud_list = []
-        cirrus_list= []
+        date_list   = []  # List of L1C products used
+        rh_list     = []  # List of average relative humidity
+        props_list  = []  # List of aerosol models proportion
+        cloud_list  = []  # List of cloud fraction with shadow
+        cirrus_list = []  # List of cirrus fraction
 
         for line in range(len(self.raw)):
             # Extract list of date
@@ -126,6 +127,7 @@ class Log():
         fig.autofmt_xdate()
         pl.title(self.name)
         pl.savefig(self.name[:-4] + "_clouds.png")
+
 
 def main():
     parser = argparse.ArgumentParser()
