@@ -37,22 +37,31 @@ register_matplotlib_converters()
 
 
 class Log:
-    def __init__(self, log_file, verbose=False):
+    def __init__(self, log_file, tau_file=None, verbose=False):
+
+        # Catch args as attributes
+        self.tau_file = tau_file
+        self.verbose = verbose
 
         # DataFrame key labels
-        self.lblDate   = 'Date'
-        self.lblRH     = 'RH'
-        self.lblCloud  = 'Cloud Fraction (with shadow)'
+        self.lblDate = 'Date'
+        self.lblRH = 'RH'
+        self.lblCloud = 'Cloud Fraction (with shadow)'
         self.lblCirrus = 'Cirrus Fraction'
-        self.lblOzone  = 'Ozone'
+        self.lblOzone = 'Ozone'
+        self.lblAvgTau = 'Average tau'
 
-        # Regex definitions
-        self.regexDate   = "^L1C"
-        self.regexRH     = "^average"
-        self.regexCAMS   = "^temporalInterpProps"
-        self.regexCloud  = "couverture nuageuse \(avec ombres\)"
+        # Regex definitions for the log file
+        self.regexDate = "^L1C"
+        self.regexRH = "^average"
+        self.regexCAMS = "^temporalInterpProps"
+        self.regexCloud = "couverture nuageuse \(avec ombres\)"
         self.regexCirrus = "taux de cirrus"
-        self.regexOzone  = "ozone"
+        self.regexOzone = "ozone"
+
+        # Regex definitions for info_composite
+        self.regexInfoDate = "Date"
+        self.regexInfoTau  = "Moyenne"
 
         try:
             with open(log_file, 'r') as f:
@@ -67,17 +76,17 @@ class Log:
             print("ERROR: file %s not found..." % log_file)
             sys.exit(1)
 
-        date_list   = []  # List of L1C products used
-        rh_list     = []  # List of average relative humidity
-        props_list  = []  # List of aerosol models proportion
-        cloud_list  = []  # List of cloud fraction with shadow
+        date_list = []  # List of L1C products used
+        rh_list = []  # List of average relative humidity
+        props_list = []  # List of aerosol models proportion
+        cloud_list = []  # List of cloud fraction with shadow
         cirrus_list = []  # List of cirrus fraction
-        ozone_list  = []  # List of ozone TODO: define unit
+        ozone_list = []  # List of ozone TODO: define unit
 
         for line in range(len(self.raw)):
             # Extract list of date
             if re.search(self.regexDate, self.raw[line]) is not None:
-                date_list.append(pd.to_datetime(self.raw[line][10:27], format='%Y%m%d%Z%H%M%S'))
+                date_list.append(pd.to_datetime(self.raw[line][10:18], format='%Y%m%d'))
 
             # Extract relative humidity
             if re.search(self.regexRH, self.raw[line]) is not None:
@@ -97,7 +106,7 @@ class Log:
 
             # Extract cloud fraction
             if re.search(self.regexCloud, self.raw[line]) is not None:
-                cloud_list.append(float(self.raw[line].split(':')[2].strip('%\n'))/100)
+                cloud_list.append(float(self.raw[line].split(':')[2].strip('%\n')) / 100)
 
             # Extract cirrus fraction
             if re.search(self.regexCirrus, self.raw[line]) is not None:
@@ -124,6 +133,47 @@ class Log:
             print("       Is it really a log of the maquette?")
             sys.exit(1)
 
+        # Parsing info_composite is any
+        if tau_file is not None:
+            try:
+                with open(tau_file, 'r') as f:
+                    self.tau_raw = f.readlines()
+                    f.close()
+                    self.tau_file = log_file.split('/')[-1]
+
+                if verbose:
+                    print("INFO: successfully opened %s" % tau_file)
+
+            except FileNotFoundError:
+                print("ERROR: file %s not found..." % tau_file)
+                sys.exit(1)
+
+            date_list = []
+            tau_avg_list  = []
+            for line in range(len(self.tau_raw)):
+                # Extract list of date
+                if re.search(self.regexInfoDate, self.tau_raw[line]) is not None:
+                    date_list.append(pd.to_datetime(self.tau_raw[line].split('=')[1], format='%Y%m%d'))
+
+                # Extract average tau
+                if re.search(self.regexInfoTau, self.tau_raw[line]) is not None:
+                    tau_avg_list.append(float(self.tau_raw[line].split('=')[1]))
+
+            # Building a list of average tau of type DataFrame
+            try:
+                self.tau = pd.DataFrame(data={self.lblDate: date_list,
+                                             self.lblAvgTau: tau_avg_list})
+
+                self.tau = self.tau.iloc[8:]
+                self.df = self.df.merge(self.tau,on='Date', how='inner')
+
+
+            except UnboundLocalError:
+                print("ERROR: file %s doesn't seem to contain expected fields..." % self.tau_file)
+                print("       Is it really a info file of the maquette?")
+                sys.exit(1)
+
+
         if verbose:
             pd.set_option('display.expand_frame_repr', False)
             print(self.df.describe())
@@ -132,19 +182,21 @@ class Log:
         with open(self.name[:-4] + "_table.csv", 'w') as f:
             f.write(self.df.to_string())
 
-
-
     def plot_props(self):
         fig, ax1 = pl.subplots(figsize=(12, 6))
 
         stack = 0
         for aerosol in self.aerosols:
-            ax1.bar(self.df[self.lblDate], self.df[aerosol], bottom=stack, label=aerosol)
-            stack += self.df[aerosol]
+            if self.tau_file is None:
+                ax1.bar(self.df[self.lblDate], self.df[aerosol], bottom=stack, label=aerosol)
+                stack += self.df[aerosol]
+            elif self.tau_file is not None:
+                ax1.bar(self.df[self.lblDate], self.df[aerosol]*self.df[self.lblAvgTau], bottom=stack, label=aerosol)
+                stack += self.df[aerosol]*self.df[self.lblAvgTau]
 
         ax1.xaxis.set_major_formatter(pl.DateFormatter("%y/%m/%d"))
         ax1.xaxis.set_minor_formatter(pl.DateFormatter("%d"))
-        ax1.set_ylabel('Aerosols fraction (-)')
+        ax1.set_ylabel('Average tau with aerosol fractions (-)')
         pl.legend()
 
         ax2 = ax1.twinx()
@@ -173,10 +225,13 @@ def main():
     parser.add_argument("-v", "--verbose", \
                         help="Set verbosity to INFO level + interactive plotting", \
                         action="store_true")
+    parser.add_argument("-t", "--tau", type=str, \
+                        help="infos_composites file to use for aerosol fraction", \
+                        default=None)
 
     args = parser.parse_args()
 
-    log = Log(args.FILE, args.verbose)
+    log = Log(args.FILE, args.tau, args.verbose)
     log.plot_props()
     log.plot_clouds()
     log.save_table()
