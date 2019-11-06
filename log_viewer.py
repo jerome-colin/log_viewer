@@ -37,10 +37,10 @@ register_matplotlib_converters()
 
 
 class Log:
-    def __init__(self, log_file, tau_file=None, verbose=False):
+    def __init__(self, log_file, tau_weight=False, verbose=False):
 
         # Catch args as attributes
-        self.tau_file = tau_file
+        self.tau_weight = tau_weight
         self.verbose = verbose
 
         # DataFrame key labels
@@ -50,6 +50,11 @@ class Log:
         self.lblCirrus = 'Cirrus Fraction'
         self.lblOzone = 'Ozone'
         self.lblAvgTau = 'Average tau'
+        self.lblWeightPrevCAMSdate = 'Prev CAMS date weight'
+        self.lblWeightNextCAMSdate = 'Next CAMS date weight'
+        self.lblPrevAOT = "Prev CAMS AOT"
+        self.lblNextAOT = "Next CAMS AOT"
+        self.lblTotalAOT = "Total CAMS AOT"
 
         # Regex definitions for the log file
         self.regexDate = "^L1C"
@@ -58,6 +63,10 @@ class Log:
         self.regexCloud = "couverture nuageuse \(avec ombres\)"
         self.regexCirrus = "taux de cirrus"
         self.regexOzone = "ozone"
+        self.regexPrevAOT = "prev AOT"
+        self.regexNextAOT = "next AOT"
+        self.regexWeightPrevCAMSdate = "weightPrevCAMSdate"
+        self.regexWeightNextCAMSdate = "weightNextCAMSdate"
 
         # Regex definitions for info_composite
         self.regexInfoDate = "Date"
@@ -82,6 +91,10 @@ class Log:
         cloud_list = []  # List of cloud fraction with shadow
         cirrus_list = []  # List of cirrus fraction
         ozone_list = []  # List of ozone TODO: define unit
+        weightPrevCAMSdate_list = []
+        weightNextCAMSdate_list = []
+        prevAOT_list = []
+        nextAOT_list = []
 
         for line in range(len(self.raw)):
             # Extract list of date
@@ -116,13 +129,39 @@ class Log:
             if re.search(self.regexOzone, self.raw[line]) is not None:
                 ozone_list.append(float(self.raw[line].split('=')[1]))
 
+            # Extract previous CAMS weights
+            if re.search(self.regexWeightPrevCAMSdate, self.raw[line]) is not None:
+                weightPrevCAMSdate_list.append(float(self.raw[line].split(':')[1]))
+
+            # Extract previous CAMS weights
+            if re.search(self.regexWeightNextCAMSdate, self.raw[line]) is not None:
+                weightNextCAMSdate_list.append(float(self.raw[line].split(':')[1]))
+
+            # Extract previous CAMS AOT
+            if re.search(self.regexPrevAOT, self.raw[line]) is not None:
+                prevAOT_dict = OrderedDict(sorted(eval(self.raw[line].split(':')[1])))
+                prevAOT_list.append(np.array(list(prevAOT_dict.values())).sum())
+
+            # Extract next CAMS AOT
+            if re.search(self.regexNextAOT, self.raw[line]) is not None:
+                nextAOT_dict = OrderedDict(sorted(eval(self.raw[line].split(':')[1])))
+                nextAOT_list.append(np.array(list(nextAOT_dict.values())).sum())
+
+        # Compute interpolated total AOT
+        total_AOT_list = np.array(weightPrevCAMSdate_list)*np.array(prevAOT_list) + np.array(weightNextCAMSdate_list)*np.array(nextAOT_list)
+
         # Building an attribute df of type DataFrame
         try:
             self.df = pd.DataFrame(data={self.lblDate: date_list,
                                          self.lblRH: rh_list,
                                          self.lblCloud: cloud_list,
                                          self.lblCirrus: cirrus_list,
-                                         self.lblOzone: ozone_list})
+                                         self.lblOzone: ozone_list,
+                                         self.lblWeightPrevCAMSdate: weightPrevCAMSdate_list,
+                                         self.lblWeightNextCAMSdate: weightNextCAMSdate_list,
+                                         self.lblPrevAOT: prevAOT_list,
+                                         self.lblNextAOT: nextAOT_list,
+                                         self.lblTotalAOT: total_AOT_list})
 
             props_df = pd.DataFrame(props_arr, columns=props_list)
             self.df = pd.concat([self.df, props_df], axis=1)
@@ -132,47 +171,6 @@ class Log:
             print("ERROR: file %s doesn't seem to contain expected fields..." % self.name)
             print("       Is it really a log of the maquette?")
             sys.exit(1)
-
-        # Parsing info_composite is any
-        if tau_file is not None:
-            try:
-                with open(tau_file, 'r') as f:
-                    self.tau_raw = f.readlines()
-                    f.close()
-                    self.tau_file = log_file.split('/')[-1]
-
-                if verbose:
-                    print("INFO: successfully opened %s" % tau_file)
-
-            except FileNotFoundError:
-                print("ERROR: file %s not found..." % tau_file)
-                sys.exit(1)
-
-            date_list = []
-            tau_avg_list  = []
-            for line in range(len(self.tau_raw)):
-                # Extract list of date
-                if re.search(self.regexInfoDate, self.tau_raw[line]) is not None:
-                    date_list.append(pd.to_datetime(self.tau_raw[line].split('=')[1], format='%Y%m%d'))
-
-                # Extract average tau
-                if re.search(self.regexInfoTau, self.tau_raw[line]) is not None:
-                    tau_avg_list.append(float(self.tau_raw[line].split('=')[1]))
-
-            # Building a list of average tau of type DataFrame
-            try:
-                self.tau = pd.DataFrame(data={self.lblDate: date_list,
-                                             self.lblAvgTau: tau_avg_list})
-
-                self.tau = self.tau.iloc[8:]
-                self.df = self.df.merge(self.tau,on='Date', how='inner')
-
-
-            except UnboundLocalError:
-                print("ERROR: file %s doesn't seem to contain expected fields..." % self.tau_file)
-                print("       Is it really a info file of the maquette?")
-                sys.exit(1)
-
 
         if verbose:
             pd.set_option('display.expand_frame_repr', False)
@@ -187,16 +185,16 @@ class Log:
 
         stack = 0
         for aerosol in self.aerosols:
-            if self.tau_file is None:
+            if self.tau_weight:
+                ax1.bar(self.df[self.lblDate], self.df[aerosol]*self.df[self.lblTotalAOT], bottom=stack, label=aerosol)
+                stack += self.df[aerosol]*self.df[self.lblTotalAOT]
+            else:
                 ax1.bar(self.df[self.lblDate], self.df[aerosol], bottom=stack, label=aerosol)
                 stack += self.df[aerosol]
-            elif self.tau_file is not None:
-                ax1.bar(self.df[self.lblDate], self.df[aerosol]*self.df[self.lblAvgTau], bottom=stack, label=aerosol)
-                stack += self.df[aerosol]*self.df[self.lblAvgTau]
 
         ax1.xaxis.set_major_formatter(pl.DateFormatter("%y/%m/%d"))
         ax1.xaxis.set_minor_formatter(pl.DateFormatter("%d"))
-        ax1.set_ylabel('Average tau with aerosol fractions (-)')
+        ax1.set_ylabel('CAMS AOT with aerosol fractions (-)')
         pl.legend()
 
         ax2 = ax1.twinx()
@@ -225,9 +223,9 @@ def main():
     parser.add_argument("-v", "--verbose", \
                         help="Set verbosity to INFO level + interactive plotting", \
                         action="store_true")
-    parser.add_argument("-t", "--tau", type=str, \
-                        help="infos_composites file to use for aerosol fraction", \
-                        default=None)
+    parser.add_argument("-t", "--tau", \
+                        help="Weight aerosols with tau", \
+                        action="store_true")
 
     args = parser.parse_args()
 
