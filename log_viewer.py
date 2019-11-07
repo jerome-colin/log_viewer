@@ -72,7 +72,7 @@ class Log:
         self._raw, self._log_file_name = self._get_file_text(log_file, verbose)
 
         # Parse MAQT log file
-        #todo: test log file for MAQT or MAJA type
+        # todo: test log file for MAQT or MAJA type
         self._date_list, self._rh_list, self._props_arr, self._props_list, self._cloud_list, self._cirrus_list, self._ozone_list, \
         self._weight_prev_cams_date_list, self._weight_next_cams_date_list, self._prev_aot_list, self._next_aot_list = self._parse_maqt_log()
 
@@ -206,9 +206,16 @@ class Log:
     def _set_aerosols_list(self):
         return self._props_list
 
-    def save_table(self):
-        with open(self._log_file_name[:-4] + "_table.csv", 'w') as f:
-            f.write(self.df.to_string())
+    def plot_clouds(self):
+        fig, ax1 = pl.subplots(figsize=(12, 6))
+
+        ax1.bar(self.df[self.lbl_date], self.df[self.lbl_cloud], label=self.lbl_cloud)
+        ax1.set_ylabel('Fraction (-)')
+        pl.legend()
+
+        fig.autofmt_xdate()
+        pl.title(self._log_file_name)
+        pl.savefig(self._log_file_name[:-4] + "_clouds.png")
 
     def plot_props(self):
         fig, ax1 = pl.subplots(figsize=(12, 6))
@@ -238,16 +245,9 @@ class Log:
         pl.title(self._log_file_name)
         pl.savefig(self._log_file_name[:-4] + "_aerosols.png")
 
-    def plot_clouds(self):
-        fig, ax1 = pl.subplots(figsize=(12, 6))
-
-        ax1.bar(self.df[self.lbl_date], self.df[self.lbl_cloud], label=self.lbl_cloud)
-        ax1.set_ylabel('Fraction (-)')
-        pl.legend()
-
-        fig.autofmt_xdate()
-        pl.title(self._log_file_name)
-        pl.savefig(self._log_file_name[:-4] + "_clouds.png")
+    def save_table(self):
+        with open(self._log_file_name[:-4] + "_table.csv", 'w') as f:
+            f.write(self.df.to_string())
 
 
 def main():
