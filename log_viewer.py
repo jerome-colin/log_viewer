@@ -2,14 +2,15 @@
 """
 Maquette log viewer utility
 
-usage: log_viewer.py [-h] [-v]  FILE
+usage: log_viewer.py [-h] [-v] [-t] FILE
 
 positional arguments:
   FILE                  Maquette LOG output
 
 optional arguments:
   -h, --help            show this help message and exit
-  -v, --verbose         Set verbosity to INFO level (includes stats)
+  -v, --verbose         set verbosity to INFO level (includes stats)
+  -t, --tau             use CAMS AOT in stack bars plot
 
 returns:
   Plot files as PNG
@@ -105,17 +106,19 @@ class Log:
 
         except UnboundLocalError:
             print("ERROR: file %s doesn't seem to contain expected fields..." % self._log_file_name)
-            print("       Is it really a log of the maquette?")
+            print("       Is it really a log of MAQT?")
             sys.exit(1)
 
-    def _extract_float_from_text(self, text, pos, sep=None, upto=False):
+    @staticmethod
+    def _extract_float_from_text(text, pos, sep=None, upto=False):
         if sep is not None:
             return float(text.split(sep)[pos])
 
         if upto:
             return float(text[pos:])
 
-    def _get_file_text(self, filename, verbose=False):
+    @staticmethod
+    def _get_file_text(filename, verbose=False):
         try:
             with open(filename, 'r') as f:
                 raw = f.readlines()
@@ -192,13 +195,13 @@ class Log:
 
             # Extract previous CAMS AOT
             if re.search(self.regex_maqt_prev_aot, self._raw[line]) is not None:
-                prevAOT_dict = OrderedDict(sorted(eval(self._raw[line].split(':')[1])))
-                prev_aot_list.append(np.array(list(prevAOT_dict.values())).sum())
+                prev_aot_dict = OrderedDict(sorted(eval(self._raw[line].split(':')[1])))
+                prev_aot_list.append(np.array(list(prev_aot_dict.values())).sum())
 
             # Extract next CAMS AOT
             if re.search(self.regex_maqt_next_aot, self._raw[line]) is not None:
-                nextAOT_dict = OrderedDict(sorted(eval(self._raw[line].split(':')[1])))
-                next_aot_list.append(np.array(list(nextAOT_dict.values())).sum())
+                next_aot_dict = OrderedDict(sorted(eval(self._raw[line].split(':')[1])))
+                next_aot_list.append(np.array(list(next_aot_dict.values())).sum())
 
         return date_list, rh_list, props_arr, props_list, cloud_list, cirrus_list, ozone_list, \
                weight_prev_cams_date_list, weight_next_cams_date_list, prev_aot_list, next_aot_list
