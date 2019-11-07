@@ -23,7 +23,7 @@ Example:
 
 __author__ = "J.Colin, CESBIO"
 __license__ = "CC BY"
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import sys
 import argparse
@@ -44,69 +44,122 @@ class Log:
         self.verbose = verbose
 
         # DataFrame key labels
-        self.lblDate = 'Date'
-        self.lblRH = 'RH'
-        self.lblCloud = 'Cloud Fraction (with shadow)'
-        self.lblCirrus = 'Cirrus Fraction'
-        self.lblOzone = 'Ozone'
-        self.lblAvgTau = 'Average tau'
-        self.lblWeightPrevCAMSdate = 'Prev CAMS date weight'
-        self.lblWeightNextCAMSdate = 'Next CAMS date weight'
-        self.lblPrevAOT = "Prev CAMS AOT"
-        self.lblNextAOT = "Next CAMS AOT"
-        self.lblTotalAOT = "Total CAMS AOT"
+        self.lbl_date = 'Date'
+        self.lbl_rh = 'RH'
+        self.lbl_cloud = 'Cloud Fraction (with shadow)'
+        self.lbl_cirrus = 'Cirrus Fraction'
+        self.lbl_ozone = 'Ozone'
+        self.lbl_avg_tau = 'Average tau'
+        self.lbl_weight_prev_cams_date = 'Prev CAMS date weight'
+        self.lbl_weight_next_cams_date = 'Next CAMS date weight'
+        self.lbl_prev_aot = "Prev CAMS AOT"
+        self.lbl_next_aot = "Next CAMS AOT"
+        self.lbl_total_aot = "Total CAMS AOT"
 
         # Regex definitions for the log file
-        self.regexDate = "^L1C"
-        self.regexRH = "^average"
-        self.regexCAMS = "^temporalInterpProps"
-        self.regexCloud = "couverture nuageuse \(avec ombres\)"
-        self.regexCirrus = "taux de cirrus"
-        self.regexOzone = "ozone"
-        self.regexPrevAOT = "prev AOT"
-        self.regexNextAOT = "next AOT"
-        self.regexWeightPrevCAMSdate = "weightPrevCAMSdate"
-        self.regexWeightNextCAMSdate = "weightNextCAMSdate"
+        self.regex_maqt_date = "^L1C"
+        self.regex_maqt_rh = "^average"
+        self.regex_maqt_cams_ratio = "^temporalInterpProps"
+        self.regex_maqt_cloud_fraction = "couverture nuageuse \(avec ombres\)"
+        self.regex_maqt_cirrus_fraction = "taux de cirrus"
+        self.regex_maqt_ozone = "ozone"
+        self.regex_maqt_prev_aot = "prev AOT"
+        self.regex_maqt_next_aot = "next AOT"
+        self.regex_maqt_weight_prev_cams_date = "weightPrevCAMSdate"
+        self.regex_maqt_weight_next_cams_date = "weightNextCAMSdate"
 
-        # Regex definitions for info_composite
-        self.regexInfoDate = "Date"
-        self.regexInfoTau  = "Moyenne"
+        # Load log file content
+        self.raw, self.name = self._get_file_text(log_file, verbose)
 
+        # Parse MAQT log file
+        self.date_list, self.rh_list, self.props_arr, self.props_list, self.cloud_list, self.cirrus_list, self.ozone_list, \
+        self.weight_prev_cams_date_list, self.weight_next_cams_date_list, self.prev_aot_list, self.next_aot_list = self._parse_maqt_log()
+
+        # Compute interpolated total AOT
+        self.total_AOT_list = self._interpolate_total_aot()
+
+        # Building an attribute df of type DataFrame
+        self.df = self._building_maqt_dataframe()
+
+        if verbose:
+            pd.set_option('display.expand_frame_repr', False)
+            print(self.df.describe())
+
+    def _building_maqt_dataframe(self):
         try:
-            with open(log_file, 'r') as f:
-                self.raw = f.readlines()
-                f.close()
-                self.name = log_file.split('/')[-1]
+            df = pd.DataFrame(data={self.lbl_date: self.date_list,
+                                         self.lbl_rh: self.rh_list,
+                                         self.lbl_cloud: self.cloud_list,
+                                         self.lbl_cirrus: self.cirrus_list,
+                                         self.lbl_ozone: self.ozone_list,
+                                         self.lbl_weight_prev_cams_date: self.weight_prev_cams_date_list,
+                                         self.lbl_weight_next_cams_date: self.weight_next_cams_date_list,
+                                         self.lbl_prev_aot: self.prev_aot_list,
+                                         self.lbl_next_aot: self.next_aot_list,
+                                         self.lbl_total_aot: self.total_AOT_list})
 
-            if verbose:
-                print("INFO: successfully opened %s" % log_file)
+            props_df = pd.DataFrame(self.props_arr, columns=self.props_list)
+            df = pd.concat([df, props_df], axis=1)
+            self.aerosols = self.props_list
+            return df
 
-        except FileNotFoundError:
-            print("ERROR: file %s not found..." % log_file)
+        except UnboundLocalError:
+            print("ERROR: file %s doesn't seem to contain expected fields..." % self.name)
+            print("       Is it really a log of the maquette?")
             sys.exit(1)
 
+    def _extract_float_from_text(self, text, pos, sep=None, upto=False):
+        if sep is not None:
+            return float(text.split(sep)[pos])
+
+        if upto:
+            return float(text[pos:])
+
+    def _get_file_text(self, filename, verbose=False):
+        try:
+            with open(filename, 'r') as f:
+                raw = f.readlines()
+                f.close()
+                name = filename.split('/')[-1]
+
+            if verbose:
+                print("INFO: successfully opened %s" % filename)
+
+            return raw, name
+
+        except FileNotFoundError:
+            print("ERROR: file %s not found..." % filename)
+            sys.exit(1)
+
+    def _interpolate_total_aot(self):
+        return np.array(self.weight_prev_cams_date_list)\
+               * np.array(self.prev_aot_list) \
+               + np.array(self.weight_next_cams_date_list)\
+               * np.array(self.next_aot_list)
+
+    def _parse_maqt_log(self):
         date_list = []  # List of L1C products used
         rh_list = []  # List of average relative humidity
         props_list = []  # List of aerosol models proportion
         cloud_list = []  # List of cloud fraction with shadow
         cirrus_list = []  # List of cirrus fraction
         ozone_list = []  # List of ozone TODO: define unit
-        weightPrevCAMSdate_list = []
-        weightNextCAMSdate_list = []
-        prevAOT_list = []
-        nextAOT_list = []
+        weight_prev_cams_date_list = []
+        weight_next_cams_date_list = []
+        prev_aot_list = []
+        next_aot_list = []
 
         for line in range(len(self.raw)):
             # Extract list of date
-            if re.search(self.regexDate, self.raw[line]) is not None:
+            if re.search(self.regex_maqt_date, self.raw[line]) is not None:
                 date_list.append(pd.to_datetime(self.raw[line][10:18], format='%Y%m%d'))
 
             # Extract relative humidity
-            if re.search(self.regexRH, self.raw[line]) is not None:
+            if re.search(self.regex_maqt_rh, self.raw[line]) is not None:
                 rh_list.append(float(self.raw[line].split(':')[1]))
 
             # Extract models proportion
-            if re.search(self.regexCAMS, self.raw[line]) is not None:
+            if re.search(self.regex_maqt_cams_ratio, self.raw[line]) is not None:
                 temporal_interp_props = OrderedDict(sorted(eval(self.raw[line].split(':')[1])))
                 if not props_list:
                     props_arr = np.array(list(temporal_interp_props.values()))
@@ -118,63 +171,37 @@ class Log:
                     props_arr = np.vstack((props_arr, list(temporal_interp_props.values())))
 
             # Extract cloud fraction
-            if re.search(self.regexCloud, self.raw[line]) is not None:
+            if re.search(self.regex_maqt_cloud_fraction, self.raw[line]) is not None:
                 cloud_list.append(float(self.raw[line].split(':')[2].strip('%\n')) / 100)
 
             # Extract cirrus fraction
-            if re.search(self.regexCirrus, self.raw[line]) is not None:
-                cirrus_list.append(float(self.raw[line][14:]))
+            if re.search(self.regex_maqt_cirrus_fraction, self.raw[line]) is not None:
+                cirrus_list.append(self._extract_float_from_text(self.raw[line], 14, upto=True))
 
             # Extract ozone
-            if re.search(self.regexOzone, self.raw[line]) is not None:
-                ozone_list.append(float(self.raw[line].split('=')[1]))
+            if re.search(self.regex_maqt_ozone, self.raw[line]) is not None:
+                ozone_list.append(self._extract_float_from_text(self.raw[line],1,'='))
 
             # Extract previous CAMS weights
-            if re.search(self.regexWeightPrevCAMSdate, self.raw[line]) is not None:
-                weightPrevCAMSdate_list.append(float(self.raw[line].split(':')[1]))
+            if re.search(self.regex_maqt_weight_prev_cams_date, self.raw[line]) is not None:
+                weight_prev_cams_date_list.append(self._extract_float_from_text(self.raw[line],1,':'))
 
             # Extract previous CAMS weights
-            if re.search(self.regexWeightNextCAMSdate, self.raw[line]) is not None:
-                weightNextCAMSdate_list.append(float(self.raw[line].split(':')[1]))
+            if re.search(self.regex_maqt_weight_next_cams_date, self.raw[line]) is not None:
+                weight_next_cams_date_list.append(self._extract_float_from_text(self.raw[line],1,':'))
 
             # Extract previous CAMS AOT
-            if re.search(self.regexPrevAOT, self.raw[line]) is not None:
+            if re.search(self.regex_maqt_prev_aot, self.raw[line]) is not None:
                 prevAOT_dict = OrderedDict(sorted(eval(self.raw[line].split(':')[1])))
-                prevAOT_list.append(np.array(list(prevAOT_dict.values())).sum())
+                prev_aot_list.append(np.array(list(prevAOT_dict.values())).sum())
 
             # Extract next CAMS AOT
-            if re.search(self.regexNextAOT, self.raw[line]) is not None:
+            if re.search(self.regex_maqt_next_aot, self.raw[line]) is not None:
                 nextAOT_dict = OrderedDict(sorted(eval(self.raw[line].split(':')[1])))
-                nextAOT_list.append(np.array(list(nextAOT_dict.values())).sum())
+                next_aot_list.append(np.array(list(nextAOT_dict.values())).sum())
 
-        # Compute interpolated total AOT
-        total_AOT_list = np.array(weightPrevCAMSdate_list)*np.array(prevAOT_list) + np.array(weightNextCAMSdate_list)*np.array(nextAOT_list)
-
-        # Building an attribute df of type DataFrame
-        try:
-            self.df = pd.DataFrame(data={self.lblDate: date_list,
-                                         self.lblRH: rh_list,
-                                         self.lblCloud: cloud_list,
-                                         self.lblCirrus: cirrus_list,
-                                         self.lblOzone: ozone_list,
-                                         self.lblWeightPrevCAMSdate: weightPrevCAMSdate_list,
-                                         self.lblWeightNextCAMSdate: weightNextCAMSdate_list,
-                                         self.lblPrevAOT: prevAOT_list,
-                                         self.lblNextAOT: nextAOT_list,
-                                         self.lblTotalAOT: total_AOT_list})
-
-            props_df = pd.DataFrame(props_arr, columns=props_list)
-            self.df = pd.concat([self.df, props_df], axis=1)
-            self.aerosols = props_list
-
-        except UnboundLocalError:
-            print("ERROR: file %s doesn't seem to contain expected fields..." % self.name)
-            print("       Is it really a log of the maquette?")
-            sys.exit(1)
-
-        if verbose:
-            pd.set_option('display.expand_frame_repr', False)
-            print(self.df.describe())
+        return date_list, rh_list, props_arr, props_list, cloud_list, cirrus_list, ozone_list, \
+        weight_prev_cams_date_list, weight_next_cams_date_list, prev_aot_list, next_aot_list
 
     def save_table(self):
         with open(self.name[:-4] + "_table.csv", 'w') as f:
@@ -186,10 +213,10 @@ class Log:
         stack = 0
         for aerosol in self.aerosols:
             if self.tau_weight:
-                ax1.bar(self.df[self.lblDate], self.df[aerosol]*self.df[self.lblTotalAOT], bottom=stack, label=aerosol)
-                stack += self.df[aerosol]*self.df[self.lblTotalAOT]
+                ax1.bar(self.df[self.lbl_date], self.df[aerosol] * self.df[self.lbl_total_aot], bottom=stack, label=aerosol)
+                stack += self.df[aerosol]*self.df[self.lbl_total_aot]
             else:
-                ax1.bar(self.df[self.lblDate], self.df[aerosol], bottom=stack, label=aerosol)
+                ax1.bar(self.df[self.lbl_date], self.df[aerosol], bottom=stack, label=aerosol)
                 stack += self.df[aerosol]
 
         ax1.xaxis.set_major_formatter(pl.DateFormatter("%y/%m/%d"))
@@ -199,7 +226,7 @@ class Log:
 
         ax2 = ax1.twinx()
         ax2.set_ylabel('Relative humidity (%)')
-        ax2.plot(self.df[self.lblDate], self.df[self.lblRH])
+        ax2.plot(self.df[self.lbl_date], self.df[self.lbl_rh])
 
         fig.autofmt_xdate()
         pl.title(self.name)
@@ -208,7 +235,7 @@ class Log:
     def plot_clouds(self):
         fig, ax1 = pl.subplots(figsize=(12, 6))
 
-        ax1.bar(self.df[self.lblDate], self.df[self.lblCloud], label=self.lblCloud)
+        ax1.bar(self.df[self.lbl_date], self.df[self.lbl_cloud], label=self.lbl_cloud)
         ax1.set_ylabel('Fraction (-)')
         pl.legend()
 
