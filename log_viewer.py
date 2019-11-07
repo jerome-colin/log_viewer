@@ -220,7 +220,7 @@ class Log:
         pl.title(self._log_file_name)
         pl.savefig(self._log_file_name[:-4] + "_clouds.png")
 
-    def plot_props(self):
+    def plot_aerosols(self):
         fig, ax1 = pl.subplots(figsize=(12, 6))
 
         aerosols = self._set_aerosols_list()
@@ -263,7 +263,7 @@ def main():
     args = parser.parse_args()
 
     log = Log(args.FILE, args.tau, args.verbose)
-    log.plot_props()
+    log.plot_aerosols()
     log.plot_clouds()
     log.save_table()
 
